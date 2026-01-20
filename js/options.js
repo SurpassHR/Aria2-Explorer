@@ -348,7 +348,8 @@ var Configs =
             if (!confirm(str))
                 return;
         }
-        chrome.storage.sync.set(Configs).then(() => {
+        // Use getConfigData() to extract only data properties (no methods)
+        chrome.storage.sync.set(getConfigData()).then(() => {
             let str = chrome.i18n.getMessage("uploadConfigSucceed");
             Configs.notifySyncResult(str, "alert-success");
         }).catch(error => {
@@ -379,7 +380,8 @@ var Configs =
                     console.warn("Download: AriaNG options is invalid.");
                 }
                 Object.assign(Configs, configs);
-                await StorageProxy.set(Configs);
+                // Use getConfigData() to extract only data properties (no methods)
+                await StorageProxy.set(getConfigData());
                 let str = chrome.i18n.getMessage("downloadConfigSucceed");
                 Configs.notifySyncResult(str, "alert-success");
             } else {
@@ -645,6 +647,6 @@ function markRpc(event) {
     let rpcIndex = event.delegateTarget.id.split('-')[1];
     if (rpcIndex in Configs.rpcList) {
         Configs.rpcList[rpcIndex].ignoreInsecure = !Configs.rpcList[rpcIndex].ignoreInsecure;
-        StorageProxy.set(Configs);
+        StorageProxy.set(getConfigData());
     }
 }

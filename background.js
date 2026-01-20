@@ -1,5 +1,5 @@
 import Utils from "./js/utils.js";
-import Configs from "./js/config.js";
+import Configs, { DefaultConfigs } from "./js/config.js";
 import Aria2 from "./js/aria2.js";
 import Aria2Options from "./js/aria2Options.js";
 import ContextMenu from "./js/contextMenu.js";
@@ -9,6 +9,21 @@ import DownloadCapture from './js/downloadCapture.js';
 import SidePanelCompat from './js/sidePanelCompat.js';
 import BrowserCompat from './js/browserCompat.js';
 import StorageProxy from './js/storageProxy.js';
+
+/**
+ * Extract only data properties from Configs object for storage
+ * Firefox's storage API cannot clone functions
+ */
+function getConfigData() {
+    const data = {};
+    const configKeys = Object.keys(DefaultConfigs);
+    for (const key of configKeys) {
+        if (Configs.hasOwnProperty(key) && typeof Configs[key] !== 'function') {
+            data[key] = Configs[key];
+        }
+    }
+    return data;
+}
 
 const NID_DEFAULT = "NID_DEFAULT";
 const NID_TASK_NEW = "NID_TASK_NEW";
@@ -609,7 +624,7 @@ function onMenuClick(info, tab) {
         let id = info.menuItemId.split('-')[1];
         getRpcServer('*').pattern = '';
         Configs.rpcList[id].pattern = '*';
-        StorageProxy.set(Configs);
+        StorageProxy.set(getConfigData());
     } else if (info.menuItemId.startsWith("MENU_EXPORT_TO")) {
         if (Configs.askBeforeExport) {
             const rpcItem = getRpcServer(downloadItem.url);
@@ -899,7 +914,7 @@ function registerAllListeners() {
     chrome.runtime.onInstalled.addListener(function (details) {
         if (details.reason == "install") {
             const url = chrome.runtime.getURL("options.html");
-            StorageProxy.set(Configs).then(() => chrome.tabs.create({ url }));
+            StorageProxy.set(getConfigData()).then(() => chrome.tabs.create({ url }));
         } else if (details.reason == "update") {
             const manifest = chrome.runtime.getManifest();
             /* new version update notification */
