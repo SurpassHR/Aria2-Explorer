@@ -126,7 +126,6 @@ function generateFirefoxManifest() {
             "scripts": ["js/browser-polyfill.min.js", "background.js"],
             "type": "module"
         },
-        "incognito": "spanning",
         "content_security_policy": {
             "extension_pages": "script-src 'self';object-src 'self';"
         },

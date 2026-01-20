@@ -8,6 +8,7 @@ import { AnimationController } from './js/IconUtils/AnimationController.js';
 import DownloadCapture from './js/downloadCapture.js';
 import SidePanelCompat from './js/sidePanelCompat.js';
 import BrowserCompat from './js/browserCompat.js';
+import StorageProxy from './js/storageProxy.js';
 
 const NID_DEFAULT = "NID_DEFAULT";
 const NID_TASK_NEW = "NID_TASK_NEW";
@@ -595,9 +596,9 @@ function onMenuClick(info, tab) {
         const url = chrome.runtime.getURL('aria2.html');
         chrome.tabs.create({ url });
     } else if (info.menuItemId == "MENU_CAPTURE_DOWNLOAD") {
-        chrome.storage.local.set({ integration: info.checked });
+        StorageProxy.set({ integration: info.checked });
     } else if (info.menuItemId == "MENU_MONITOR_ARIA2") {
-        chrome.storage.local.set({ monitorAria2: info.checked });
+        StorageProxy.set({ monitorAria2: info.checked });
     } else if (info.menuItemId == "MENU_UPDATE_BLOCK_SITE") {
         updateBlockedSites(tab);
         updateOptionMenu(tab);
@@ -608,7 +609,7 @@ function onMenuClick(info, tab) {
         let id = info.menuItemId.split('-')[1];
         getRpcServer('*').pattern = '';
         Configs.rpcList[id].pattern = '*';
-        chrome.storage.local.set(Configs);
+        StorageProxy.set(Configs);
     } else if (info.menuItemId.startsWith("MENU_EXPORT_TO")) {
         if (Configs.askBeforeExport) {
             const rpcItem = getRpcServer(downloadItem.url);
@@ -671,7 +672,7 @@ function updateAllowedSites(tab) {
         allowedSitesSet.add(url.hostname);
     }
     Configs.allowedSites = Array.from(allowedSitesSet);
-    chrome.storage.local.set({ allowedSites: Configs.allowedSites });
+    StorageProxy.set({ allowedSites: Configs.allowedSites });
 }
 
 function updateBlockedSites(tab) {
@@ -688,7 +689,7 @@ function updateBlockedSites(tab) {
         blockedSitesSet.add(url.hostname);
     }
     Configs.blockedSites = Array.from(blockedSitesSet);
-    chrome.storage.local.set({ blockedSites: Configs.blockedSites });
+    StorageProxy.set({ blockedSites: Configs.blockedSites });
 }
 
 function enableMonitor() {
@@ -878,7 +879,7 @@ function registerAllListeners() {
                 case 0:
                     break;
                 case 1:
-                    chrome.storage.local.set({ remindCaptureTip: false });
+                    StorageProxy.set({ remindCaptureTip: false });
                     break;
             }
         }
@@ -888,7 +889,7 @@ function registerAllListeners() {
     chrome.commands.onCommand.addListener(function (command) {
         if (command === "toggle-capture") {
             Configs.integration = !Configs.integration;
-            chrome.storage.local.set({ integration: Configs.integration });
+            StorageProxy.set({ integration: Configs.integration });
         } else if (command === "launch-aria2") {
             const url = chrome.runtime.getURL('aria2.html');
             chrome.tabs.create({ url });
@@ -898,7 +899,7 @@ function registerAllListeners() {
     chrome.runtime.onInstalled.addListener(function (details) {
         if (details.reason == "install") {
             const url = chrome.runtime.getURL("options.html");
-            chrome.storage.local.set(Configs).then(() => chrome.tabs.create({ url }));
+            StorageProxy.set(Configs).then(() => chrome.tabs.create({ url }));
         } else if (details.reason == "update") {
             const manifest = chrome.runtime.getManifest();
             /* new version update notification */
@@ -941,13 +942,45 @@ function registerAllListeners() {
                 case "CLICK_EVENT":
                     AltKeyPressed = message.data.altKeyPressed;
                     break;
+                // Firefox storage proxy - route storage operations through background
+                // to ensure consistent storage across containers
+                case "STORAGE_GET":
+                    StorageProxy.get(message.keys).then(data => {
+                        sendResponse({ success: true, data: data });
+                    }).catch(err => {
+                        sendResponse({ success: false, error: err.message });
+                    });
+                    return true;
+                case "STORAGE_SET":
+                    StorageProxy.set(message.items).then(() => {
+                        sendResponse({ success: true });
+                    }).catch(err => {
+                        sendResponse({ success: false, error: err.message });
+                    });
+                    return true;
+                case "STORAGE_REMOVE":
+                    StorageProxy.remove(message.keys).then(() => {
+                        sendResponse({ success: true });
+                    }).catch(err => {
+                        sendResponse({ success: false, error: err.message });
+                    });
+                    return true;
+                case "STORAGE_CLEAR":
+                    StorageProxy.clear().then(() => {
+                        sendResponse({ success: true });
+                    }).catch(err => {
+                        sendResponse({ success: false, error: err.message });
+                    });
+                    return true;
             }
         }
     );
 
     /* Listen to the setting changes from options menu and page to control the extension behaviors */
     chrome.storage.onChanged.addListener(function (changes, area) {
-        if (area !== "local") return;
+        // Firefox uses sync storage, Chrome uses local storage
+        const expectedArea = BrowserCompat.isFirefox ? "sync" : "local";
+        if (area !== expectedArea) return;
 
         let needReInit = changes.rpcList || changes.contextMenus || changes.askBeforeExport ||
             changes.exportAll || changes.allowNotification || changes.integration ||
@@ -973,7 +1006,7 @@ function registerAllListeners() {
 
 /* init popup url, context menu, download capture and aria2 monitor */
 function init() {
-    chrome.storage.local.get().then((configs) => {
+    StorageProxy.get().then((configs) => {
         Object.assign(Configs, configs);
         let url = Configs.webUIOpenStyle == "popup" ? chrome.runtime.getURL('ui/ariang/popup.html') : '';
         chrome.action.setPopup({

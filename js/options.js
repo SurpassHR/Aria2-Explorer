@@ -1,6 +1,7 @@
 import Utils from "./utils.js";
 import { DefaultConfigs, DefaultAriaNgOptions } from "./config.js";
 import BrowserCompat from "./browserCompat.js";
+import StorageProxy from "./storageProxy.js";
 
 const AriaNgOptionsKey = "AriaNg.Options"; // AriaNG options local storage key
 
@@ -70,7 +71,7 @@ function handleFirefoxOptions() {
         if (Configs.webUIOpenStyle === "sidePanel") {
             $("#tab").prop("checked", true);
             Configs.webUIOpenStyle = "tab";
-            chrome.storage.local.set({ webUIOpenStyle: "tab" });
+            StorageProxy.set({ webUIOpenStyle: "tab" });
         }
     }
     
@@ -103,7 +104,7 @@ var Configs =
             await upgradeStorage();
         let configs = null;
         try {
-            configs = await chrome.storage.local.get();
+            configs = await StorageProxy.get();
         } catch (error) {
             console.error("init: " + error.message);
         }
@@ -273,7 +274,7 @@ var Configs =
 
         $("#colorMode").off().on("click", function () {
             Configs.colorModeId = (Configs.colorModeId + 1) % ColorModeList.length;
-            chrome.storage.local.set({ colorModeId: Configs.colorModeId });
+            StorageProxy.set({ colorModeId: Configs.colorModeId });
         });
 
         $("#exportConfig").off().on("click", Configs.export);
@@ -286,7 +287,7 @@ var Configs =
     reset: async function () {
         if (confirm(chrome.i18n.getMessage("ClearSettingsDes"))) {
             localStorage.clear();
-            await chrome.storage.local.clear().then(() => { chrome.storage.local.set(DefaultConfigs) });
+            await StorageProxy.clear().then(() => { StorageProxy.set(DefaultConfigs) });
         }
     },
     save: function () {
@@ -329,7 +330,7 @@ var Configs =
             tempSet.delete("");
             Configs[textarea.id] = Array.from(tempSet);
         }
-        chrome.storage.local.set(getConfigData());
+        StorageProxy.set(getConfigData());
     },
     upload: function () {
         try {
@@ -378,7 +379,7 @@ var Configs =
                     console.warn("Download: AriaNG options is invalid.");
                 }
                 Object.assign(Configs, configs);
-                await chrome.storage.local.set(Configs);
+                await StorageProxy.set(Configs);
                 let str = chrome.i18n.getMessage("downloadConfigSucceed");
                 Configs.notifySyncResult(str, "alert-success");
             } else {
@@ -471,7 +472,7 @@ var Configs =
 
                 Object.assign(Configs, DefaultConfigs, configData);
 
-                await chrome.storage.local.set(getConfigData());
+                await StorageProxy.set(getConfigData());
 
                 await Configs.init();
 
@@ -494,7 +495,9 @@ window.onload = Configs.init;
 window.matchMedia('(prefers-color-scheme: dark)').onchange = setColorMode;
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName == "local") {
+    // Firefox uses sync storage, Chrome uses local storage
+    const expectedArea = BrowserCompat.isFirefox ? "sync" : "local";
+    if (areaName == expectedArea) {
         if (Object.keys(changes).length == 1 && changes.hasOwnProperty('colorModeId')) {
             /* Only call setColorMode to avoid breaking the rpc list's transition animation */
             setColorMode();
@@ -582,7 +585,7 @@ function toggleMagnetHandler(flag) {
  * Migrate extension settings from web local storage to Chrome local storage
  */
 async function upgradeStorage() {
-    let configs = await chrome.storage.local.get("rpcList");
+    let configs = await StorageProxy.get("rpcList");
     if (configs.rpcList) return;
     let convertMap = {
         white_site: "allowedSites",
@@ -612,7 +615,7 @@ async function upgradeStorage() {
         else
             configs[k] = v;
     }
-    chrome.storage.local.set(configs).then(
+    StorageProxy.set(configs).then(
         () => console.log("Storage upgrade completed.")
     );
 }
@@ -642,6 +645,6 @@ function markRpc(event) {
     let rpcIndex = event.delegateTarget.id.split('-')[1];
     if (rpcIndex in Configs.rpcList) {
         Configs.rpcList[rpcIndex].ignoreInsecure = !Configs.rpcList[rpcIndex].ignoreInsecure;
-        chrome.storage.local.set(Configs);
+        StorageProxy.set(Configs);
     }
 }
