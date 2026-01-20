@@ -1,4 +1,5 @@
 import { DefaultAriaNgOptions } from "./config.js";
+import BrowserCompat from "./browserCompat.js";
 
 class Utils {
     /**
@@ -247,6 +248,13 @@ class Utils {
             requireInteraction: false
         };
         Object.assign(option, content);
+        
+        // Firefox does not support notification buttons
+        // Remove buttons field to prevent errors on Firefox
+        if (BrowserCompat.isFirefox && option.buttons) {
+            delete option.buttons;
+        }
+        
         chrome.notifications.create(id, option);
     }
 
@@ -290,10 +298,11 @@ class Utils {
 
     /**
      * Return the OS platform name
-     * @return {string} OS platform name
+     * Uses BrowserCompat for cross-browser compatibility (Chrome and Firefox)
+     * @return {Promise<string>} OS platform name
      */
-    static getPlatform() {
-        return navigator.userAgentData.platform;
+    static async getPlatform() {
+        return BrowserCompat.getPlatform();
     }
 }
 

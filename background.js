@@ -5,6 +5,9 @@ import Aria2Options from "./js/aria2Options.js";
 import ContextMenu from "./js/contextMenu.js";
 import { IconManager } from "./js/IconUtils/IconManager.js";
 import { AnimationController } from './js/IconUtils/AnimationController.js';
+import DownloadCapture from './js/downloadCapture.js';
+import SidePanelCompat from './js/sidePanelCompat.js';
+import BrowserCompat from './js/browserCompat.js';
 
 const NID_DEFAULT = "NID_DEFAULT";
 const NID_TASK_NEW = "NID_TASK_NEW";
@@ -23,8 +26,9 @@ var RemoteAria2List = [];
 
 const IconAnimController = new AnimationController();
 const ContextMenus = new ContextMenu();
+const downloadCapture = new DownloadCapture();
 
-const isDownloadListened = () => chrome.downloads.onDeterminingFilename.hasListener(captureDownload);
+const isDownloadListened = () => downloadCapture.isListening;
 
 /**
  * @typedef RpcItem
@@ -250,12 +254,30 @@ function shouldCapture(downloadItem) {
         }
     }
 
-    return downloadItem.fileSize >= Configs.fileSize * 1024 * 1024
+    // Get file size - try multiple properties for cross-browser compatibility
+    // Chrome uses fileSize, Firefox may use totalBytes
+    // Both return -1 when size is unknown
+    let fileSize = -1;
+    if (typeof downloadItem.fileSize === 'number' && downloadItem.fileSize >= 0) {
+        fileSize = downloadItem.fileSize;
+    } else if (typeof downloadItem.totalBytes === 'number' && downloadItem.totalBytes >= 0) {
+        fileSize = downloadItem.totalBytes;
+    }
+    
+    const threshold = Configs.fileSize * 1024 * 1024;
+    
+    // If file size is unknown (-1), capture it by default (let aria2 handle it)
+    // This is important for Firefox where size may not be known at onCreated time
+    if (fileSize < 0) {
+        return true;
+    }
+    
+    return fileSize >= threshold;
 }
 
 function enableCapture() {
     if (!isDownloadListened()) {
-        chrome.downloads.onDeterminingFilename.addListener(captureDownload);
+        downloadCapture.startCapture(captureDownload);
     }
     IconManager.turnOn();
     Configs.integration = true;
@@ -264,19 +286,19 @@ function enableCapture() {
 
 function disableCapture() {
     if (isDownloadListened()) {
-        chrome.downloads.onDeterminingFilename.removeListener(captureDownload);
+        downloadCapture.stopCapture();
     }
     IconManager.turnOff(Configs.iconOffStyle);
     Configs.integration = false;
     ContextMenus.update("MENU_CAPTURE_DOWNLOAD", { checked: false });
 }
 
-async function captureDownload(downloadItem, suggest) {
+async function captureDownload(downloadItem) {
     if (downloadItem.byExtensionId) {
         // TODO: Filename assigned by chrome.downloads.download() was not passed in
         // and will be discarded by Chrome. No solution or workaround right now. The
         // only way is disabling capture before other extensions call chrome.downloads.download().
-        suggest();
+        // Note: suggest() is already called by DownloadCapture module before this callback
         const title = chrome.i18n.getMessage("RemindCaptureTip");
         const message = chrome.i18n.getMessage("RemindCaptureTipDes");
         const requireInteraction = true;
@@ -292,11 +314,30 @@ async function captureDownload(downloadItem, suggest) {
     if (downloadItem.finalUrl && downloadItem.finalUrl != "about:blank") {
         downloadItem.url = downloadItem.finalUrl;
     }
-    if (Configs.integration && shouldCapture(downloadItem)) {
-        chrome.downloads.cancel(downloadItem.id).then(() => {
-            if (chrome.runtime.lastError)
-                chrome.runtime.lastError = null;
-        });
+    
+    const shouldCaptureResult = shouldCapture(downloadItem);
+    
+    if (Configs.integration && shouldCaptureResult) {
+        const downloadId = downloadItem.id;
+        
+        // Cancel the browser download
+        try {
+            await chrome.downloads.cancel(downloadId);
+            
+            // Firefox: erase the download from history to clean up UI
+            if (BrowserCompat.isFirefox) {
+                setTimeout(async () => {
+                    try {
+                        await chrome.downloads.erase({ id: downloadId });
+                    } catch (e) {
+                        // Ignore - download might already be erased
+                    }
+                }, 100);
+            }
+        } catch (err) {
+            // Ignore cancel errors
+        }
+        
         if (downloadItem.referrer == "about:blank") {
             downloadItem.referrer = "";
         }
@@ -319,9 +360,9 @@ async function launchUI(info) {
     if (Configs.webUIOpenStyle == "sidePanel") {
         try {
             if (info && 'id' in info) {
-                await chrome.sidePanel.open({ tabId: info.id });
+                await SidePanelCompat.open({ tabId: info.id });
             } else {
-                await chrome.sidePanel.open({ windowId: CurrentWindowId });
+                await SidePanelCompat.open({ windowId: CurrentWindowId });
             };
             sidePanelOpened = true;
         } catch {
@@ -357,9 +398,9 @@ async function launchUI(info) {
 
     if (sidePanelOpened) {
         if (info && 'id' in info) {
-            await chrome.sidePanel.setOptions({ tabId: info.id, path: webUiUrl });
+            await SidePanelCompat.setOptions({ tabId: info.id, path: webUiUrl });
         } else {
-            await chrome.sidePanel.setOptions({ path: webUiUrl });
+            await SidePanelCompat.setOptions({ path: webUiUrl });
         }
         return;
     }
@@ -385,11 +426,11 @@ async function launchUI(info) {
 }
 
 async function openInWindow(url) {
-    let screen = await chrome.system.display.getInfo()
-    const w = Math.floor(screen[0].workArea.width * 0.75);
-    const h = Math.floor(screen[0].workArea.height * 0.75)
-    const l = Math.floor(screen[0].workArea.width * 0.12);
-    const t = Math.floor(screen[0].workArea.height * 0.12);
+    let screen = await BrowserCompat.getScreenSize();
+    const w = Math.floor(screen.width * 0.75);
+    const h = Math.floor(screen.height * 0.75);
+    const l = Math.floor(screen.width * 0.12);
+    const t = Math.floor(screen.height * 0.12);
 
     chrome.windows.create({
         url: url,
@@ -669,9 +710,9 @@ function disableMonitor() {
     Configs.monitorAria2 = false;
     ContextMenus.update("MENU_MONITOR_ARIA2", { checked: false });
     if (Configs.integration && !isDownloadListened()) {
-        chrome.downloads.onDeterminingFilename.addListener(captureDownload);
+        downloadCapture.startCapture(captureDownload);
     }
-    chrome.power.releaseKeepAwake();
+    BrowserCompat.releaseKeepAwake();
 }
 
 async function monitorAria2() {
@@ -695,7 +736,7 @@ async function monitorAria2() {
             uploadSpeed += Number(response.result.uploadSpeed);
             downloadSpeed += Number(response.result.downloadSpeed);
             if (Configs.integration && i == 0 && !isDownloadListened()) {
-                chrome.downloads.onDeterminingFilename.addListener(captureDownload);
+                downloadCapture.startCapture(captureDownload);
             }
 
             // Only for default aria2, needs Aria2 enhanced version
@@ -712,7 +753,7 @@ async function monitorAria2() {
                     errorMessage = "Aria2 server is unreachable";
 
                 if (Configs.monitorAria2 && Configs.integration && isDownloadListened()) {
-                    chrome.downloads.onDeterminingFilename.removeListener(captureDownload);
+                    downloadCapture.stopCapture();
                 }
             }
         } finally {
@@ -728,16 +769,16 @@ async function monitorAria2() {
             MonitorId = setInterval(monitorAria2, MonitorInterval);
         }
         if (Configs.keepAwake && localConnected > 0)
-            chrome.power.requestKeepAwake("system");
+            BrowserCompat.requestKeepAwake("system");
         else
-            chrome.power.releaseKeepAwake();
+            BrowserCompat.releaseKeepAwake();
     } else if (active == 0) {
         if (MonitorInterval == INTERVAL_SHORT) {
             MonitorInterval = INTERVAL_LONG;
             clearInterval(MonitorId);
             MonitorId = setInterval(monitorAria2, MonitorInterval);
         }
-        chrome.power.releaseKeepAwake();
+        BrowserCompat.releaseKeepAwake();
         if (waiting > 0) {
             IconAnimController.start('Pause');
         }
@@ -769,7 +810,7 @@ async function monitorAria2() {
         let finishStr = chrome.i18n.getMessage("finish");
         title += `${downloadStr}: ${active}  ${waitStr}: ${waiting}  ${finishStr}: ${stopped}\n${uploadStr}: ${uploadSpeed}  ${downloadStr}: ${downloadSpeed}`;
     } else {
-        if (localConnected == 0) chrome.power.releaseKeepAwake();
+        if (localConnected == 0) BrowserCompat.releaseKeepAwake();
         bgColor = "#A83030" // red;
         text = 'E';
         if (Configs.monitorAll)
@@ -788,10 +829,10 @@ async function monitorAria2() {
 
 async function resetSidePanel(tabId) {
     if (Configs.webUIOpenStyle == "sidePanel") {
-        let { path } = await chrome.sidePanel.getOptions(tabId ? { tabId } : undefined);
+        let { path } = await SidePanelCompat.getOptions(tabId ? { tabId } : undefined);
         const defaultPath = 'ui/ariang/index.html';
         if (!path.endsWith(defaultPath)) {
-            chrome.sidePanel.setOptions(tabId ? { tabId, path: defaultPath } : { path: defaultPath });
+            SidePanelCompat.setOptions(tabId ? { tabId, path: defaultPath } : { path: defaultPath });
         }
     }
 }
@@ -949,7 +990,7 @@ function init() {
         });
         url = Configs.captureMagnet ? "https://github.com/alexhua/Aria2-Explore/issues/98" : '';
         chrome.runtime.setUninstallURL(url);
-        chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: Configs.webUIOpenStyle == "sidePanel" });
+        SidePanelCompat.setPanelBehavior({ openPanelOnActionClick: Configs.webUIOpenStyle == "sidePanel" });
     });
 }
 
@@ -979,6 +1020,16 @@ function initRemoteAria2() {
 }
 
 async function initClickChecker() {
+    // Firefox does not fully support scripting.registerContentScripts API
+    // For Firefox, content scripts are declared statically in manifest.json (content_scripts field)
+    // This dynamic registration is only used for Chrome
+    // Requirements: 8.1, 8.2
+    if (!BrowserCompat.hasAPI('scripting.registerContentScripts')) {
+        // Firefox: Skip dynamic registration - content scripts are declared in manifest.json
+        return;
+    }
+
+    // Chrome: Use dynamic content script registration
     const CS_ID = 'ALT_CLICK_CHECKER';
     const scripts = await chrome.scripting.getRegisteredContentScripts({ ids: [CS_ID] });
     if (Configs.integration && Configs.checkClick && scripts.length == 0) {

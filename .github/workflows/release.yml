@@ -15,20 +15,29 @@ jobs:
     
     steps:    
       - name: Checkout
-        uses: actions/checkout@v3
-            
-      - name: Zip
-        uses: "cardinalby/webext-buildtools-pack-extension-dir-action@v1"
-        with:
-          extensionDir: .
-          zipIgnore: ".git|.github|*.crx"
-          zipFilePath: "build/extension.zip"
+        uses: actions/checkout@v4
       
-      - name: Crx
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Build Extensions
+        run: |
+          npm run build:all
+      
+      - name: Rename artifacts
+        run: |
+          mv dist/aria2-explorer-chrome.zip dist/aria2e-chrome-${{ github.ref_name }}.zip
+          mv dist/aria2-explorer-firefox.zip dist/aria2e-firefox-${{ github.ref_name }}.zip
+          # Create XPI (Firefox extension format - same as ZIP but with .xpi extension)
+          cp dist/aria2e-firefox-${{ github.ref_name }}.zip dist/aria2e-firefox-${{ github.ref_name }}.xpi
+      
+      - name: Create Chrome CRX
         uses: "cardinalby/webext-buildtools-chrome-crx-action@v2"
         with:
-          zipFilePath: "build/extension.zip"
-          crxFilePath: "build/aria2e-${{ github.ref_name }}.crx"
+          zipFilePath: "dist/aria2e-chrome-${{ github.ref_name }}.zip"
+          crxFilePath: "dist/aria2e-chrome-${{ github.ref_name }}.crx"
           privateKey: ${{ secrets.CHROME_CRX_PRIVATE_KEY }}
 
       - name: Release
@@ -36,4 +45,8 @@ jobs:
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           prerelease: false
-          files: "build/aria2e-${{ github.ref_name }}.crx"
+          files: |
+            dist/aria2e-chrome-${{ github.ref_name }}.crx
+            dist/aria2e-chrome-${{ github.ref_name }}.zip
+            dist/aria2e-firefox-${{ github.ref_name }}.zip
+            dist/aria2e-firefox-${{ github.ref_name }}.xpi

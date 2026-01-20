@@ -1,7 +1,24 @@
 import Utils from "./utils.js";
 import { DefaultConfigs, DefaultAriaNgOptions } from "./config.js";
+import BrowserCompat from "./browserCompat.js";
 
 const AriaNgOptionsKey = "AriaNg.Options"; // AriaNG options local storage key
+
+/**
+ * Extract only data properties from Configs object for storage
+ * Firefox's storage API cannot clone functions, so we need to filter them out
+ * @returns {Object} Plain data object without methods
+ */
+function getConfigData() {
+    const data = {};
+    const configKeys = Object.keys(DefaultConfigs);
+    for (const key of configKeys) {
+        if (Configs.hasOwnProperty(key) && typeof Configs[key] !== 'function') {
+            data[key] = Configs[key];
+        }
+    }
+    return data;
+}
 
 const SHORTCUTS_PAGE_URL = "chrome://extensions/shortcuts";
 
@@ -24,6 +41,59 @@ const SecretKeyStr = chrome.i18n.getMessage("SecretKey");
 const DownloadLocationStr = chrome.i18n.getMessage("DownloadLocation");
 const MarkAsSecureTip = chrome.i18n.getMessage("MarkAsSecureTip");
 const MarkAsInsecureTip = chrome.i18n.getMessage("MarkAsInsecureTip");
+
+// Firefox compatibility messages
+const FirefoxSidePanelTip = chrome.i18n.getMessage("FirefoxSidePanelTip") || "Side Panel is not supported in Firefox. Please use Tab, Popup, or Window mode.";
+const FirefoxKeepAwakeTip = chrome.i18n.getMessage("FirefoxKeepAwakeTip") || "Keep Awake is not supported in Firefox.";
+
+/**
+ * Handle Firefox-specific option disabling
+ * Disables options that are not supported in Firefox and adds visual feedback
+ * Requirements: 10.3, 11.1
+ */
+function handleFirefoxOptions() {
+    // Check Side Panel support and disable if not available
+    if (!BrowserCompat.supportsSidePanel) {
+        const sidePanelRadio = $("#sidePanel");
+        const sidePanelLabel = $("label[for='sidePanel']");
+        
+        // Disable the radio button
+        sidePanelRadio.prop("disabled", true);
+        
+        // Add visual styling for disabled state
+        sidePanelLabel.addClass("text-muted");
+        
+        // Add tooltip to the parent container
+        sidePanelRadio.closest(".form-check").addClass("tool-tip").attr("tooltip-content", FirefoxSidePanelTip);
+        
+        // If sidePanel was previously selected, switch to tab mode
+        if (Configs.webUIOpenStyle === "sidePanel") {
+            $("#tab").prop("checked", true);
+            Configs.webUIOpenStyle = "tab";
+            chrome.storage.local.set({ webUIOpenStyle: "tab" });
+        }
+    }
+    
+    // Check Power API support and disable keepAwake if not available
+    if (!BrowserCompat.supportsPowerAPI) {
+        const keepAwakeCheckbox = $("#keepAwake");
+        const keepAwakeLabel = $("label[for='keepAwake']");
+        
+        // Disable the checkbox
+        keepAwakeCheckbox.prop("disabled", true);
+        
+        // Add visual styling for disabled state
+        keepAwakeLabel.addClass("text-muted");
+        
+        // Add tooltip to the parent container
+        keepAwakeCheckbox.closest(".custom-control").addClass("tool-tip").attr("tooltip-content", FirefoxKeepAwakeTip);
+        
+        // Uncheck if it was previously checked (since it won't work anyway)
+        if (Configs.keepAwake) {
+            keepAwakeCheckbox.prop("checked", false);
+        }
+    }
+}
 
 var Configs =
 {
@@ -209,6 +279,9 @@ var Configs =
         $("#exportConfig").off().on("click", Configs.export);
         $("#importConfig").off().on("click", Configs.import);
         $("#configFileInput").off().on("change", Configs.handleConfigImport);
+        
+        // Handle Firefox-specific options (disable unsupported features)
+        handleFirefoxOptions();
     },
     reset: async function () {
         if (confirm(chrome.i18n.getMessage("ClearSettingsDes"))) {
@@ -256,7 +329,7 @@ var Configs =
             tempSet.delete("");
             Configs[textarea.id] = Array.from(tempSet);
         }
-        chrome.storage.local.set(Configs);
+        chrome.storage.local.set(getConfigData());
     },
     upload: function () {
         try {
@@ -398,7 +471,7 @@ var Configs =
 
                 Object.assign(Configs, DefaultConfigs, configData);
 
-                await chrome.storage.local.set(Configs);
+                await chrome.storage.local.set(getConfigData());
 
                 await Configs.init();
 

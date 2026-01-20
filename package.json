@@ -1,0 +1,31 @@
+{
+  "name": "aria2-explorer",
+  "version": "2.7.7",
+  "description": "Aria2 download manager browser extension with Chrome and Firefox support",
+  "private": true,
+  "scripts": {
+    "build:chrome": "node build/build.js --chrome",
+    "build:firefox": "node build/build.js --firefox",
+    "build:all": "node build/build.js --all",
+    "build:clean": "node build/build.js --all --clean",
+    "manifest:chrome": "node build/manifest-generator.js --chrome",
+    "manifest:firefox": "node build/manifest-generator.js --firefox"
+  },
+  "keywords": [
+    "aria2",
+    "download",
+    "browser-extension",
+    "chrome-extension",
+    "firefox-extension",
+    "webextension"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
